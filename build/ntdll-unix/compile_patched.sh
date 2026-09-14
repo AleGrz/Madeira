@@ -1,5 +1,8 @@
 #!/bin/bash
 set -e
+# Minimum iOS version for every native artifact in the app bundle. Overridable
+# so a contributor can raise it; 16.0 is the floor the project supports.
+IOS_MIN="${IOS_MIN:-16.0}"
 
 BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$BUILD_DIR/../.." && pwd)"
@@ -16,7 +19,7 @@ compile_one() {
     local out=$2
     echo -n "  $out... "
     if xcrun -sdk iphoneos clang \
-        -arch arm64 -isysroot "$SDK" -miphoneos-version-min=17.0 \
+        -arch arm64 -isysroot "$SDK" -miphoneos-version-min=$IOS_MIN \
         -O2 -fPIC -fvisibility=hidden -fno-stack-protector -fno-strict-aliasing \
         -Wno-implicit-function-declaration -Wno-int-conversion \
         -include "$WINE_BUILD/include/config.h" \

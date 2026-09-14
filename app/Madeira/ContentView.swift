@@ -686,7 +686,9 @@ struct JoystickKeyView: View {
                             hosted = true
                         }
                     }
-                    .onChange(of: geo.frame(in: .global)) { _, f in
+                    /* iOS 16 has only the single-parameter onChange; the
+                     * two-parameter form is 17+. */
+                    .onChange(of: geo.frame(in: .global)) { f in
                         center = CGPoint(x: f.midX, y: f.midY)
                         JoystickPadState.shared.center = center
                     }
@@ -1624,6 +1626,15 @@ struct ContentView: View {
         }
     }
 
+    /// How JIT gets turned on for this app, which depends on the OS: StikDebug
+    /// needs iOS 17.4+, so 16.x and early 17 use a pairing-based attach instead.
+    private var jitEnableHint: String {
+        if StikJITHelper.usesInProcessPool {
+            return "Enable JIT from AltStore/SideStore (long-press Madeira -> Enable JIT) or Jitterbug."
+        }
+        return "Use StikDebug to enable JIT for this app."
+    }
+
     private func runJITTest() {
         jitStatus = .testing
         logStore.log("Starting JIT test...")
@@ -1638,13 +1649,13 @@ struct ContentView: View {
                     logStore.log("JIT is fully functional!", level: .success)
                 case -2:
                     jitStatus = .unavailable
-                    logStore.log("CS_DEBUGGED not set. Use StikDebug to enable JIT for this app.", level: .error)
+                    logStore.log("CS_DEBUGGED not set. \(jitEnableHint)", level: .error)
                     DispatchQueue.global(qos: .userInitiated).async {
                         let mappingOk = jit_test_mapping()
                         DispatchQueue.main.async {
                             if mappingOk {
                                 jitStatus = .mappingOnly
-                                logStore.log("Dual mapping works. Enable JIT via StikDebug to unlock execution.", level: .success)
+                                logStore.log("Dual mapping works. \(jitEnableHint)", level: .success)
                             }
                         }
                     }
@@ -1673,7 +1684,7 @@ struct ContentView: View {
                     logStore.log("JIT is fully functional (strategy 2)!", level: .success)
                 case -2:
                     jitStatus = .unavailable
-                    logStore.log("CS_DEBUGGED not set. Use StikDebug to enable JIT.", level: .error)
+                    logStore.log("CS_DEBUGGED not set. \(jitEnableHint)", level: .error)
                 case -3:
                     jitStatus = .unavailable
                     logStore.log("Fault loop — debugger-allocated pages also rejected", level: .error)

@@ -7,6 +7,9 @@
 #   git clone --depth 1 --branch VER-2-13-3 https://github.com/freetype/freetype.git research/freetype
 # All optional deps disabled — fonts are plain TTFs from wine/fonts/.
 set -e
+# Minimum iOS version for every native artifact in the app bundle. Overridable
+# so a contributor can raise it; 16.0 is the floor the project supports.
+IOS_MIN="${IOS_MIN:-16.0}"
 
 BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$BUILD_DIR/../.." && pwd)"
@@ -17,7 +20,7 @@ SRC="$REPO_ROOT/research/freetype"
 cmake -S "$SRC" -B "$BUILD_DIR/build" -G "Unix Makefiles" \
   -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \
-  -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=$IOS_MIN \
   -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SHARED_LIBS=OFF \

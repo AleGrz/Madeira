@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+IOS_MIN="${IOS_MIN:-16.0}"
 DERIVED="$ROOT/app/DerivedData"
 DIST="$ROOT/dist"
 APP="$DERIVED/Build/Products/Release-iphoneos/Madeira.app"
@@ -29,7 +30,7 @@ xcodebuild \
   -sdk iphoneos \
   -destination 'generic/platform=iOS' \
   -derivedDataPath "$DERIVED" \
-  IPHONEOS_DEPLOYMENT_TARGET=18.0 \
+  IPHONEOS_DEPLOYMENT_TARGET="$IOS_MIN" \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_IDENTITY='' \

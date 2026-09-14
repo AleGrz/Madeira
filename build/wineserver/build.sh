@@ -1,5 +1,8 @@
 #!/bin/bash
 set -e
+# Minimum iOS version for every native artifact in the app bundle. Overridable
+# so a contributor can raise it; 16.0 is the floor the project supports.
+IOS_MIN="${IOS_MIN:-16.0}"
 
 BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$BUILD_DIR/../.." && pwd)"
@@ -23,7 +26,7 @@ if [ ! -f "$OBJ_DIR/libwineserver.a" ]; then
 fi
 
 CC_FLAGS=(
-    -arch arm64 -isysroot "$SDK" -miphoneos-version-min=17.0 -O2
+    -arch arm64 -isysroot "$SDK" -miphoneos-version-min=$IOS_MIN -O2
     -I"$WINE_SRC/include" -I"$WINE_SRC/include/wine"
     -I"$WINE_SRC/build-macos/include"
     -I"$BUILD_DIR" -I"$WINE_SRC/server"
@@ -97,7 +100,7 @@ PATCHED_FILES=(
 echo "=== Building kill wrapper (without kill macro) ==="
 echo -n "  wineserver_ios_kill... "
 # Compile WITHOUT -include wineserver_ios_kill.h to avoid recursive macro
-KILL_FLAGS=(-arch arm64 -isysroot "$SDK" -miphoneos-version-min=17.0 -O2
+KILL_FLAGS=(-arch arm64 -isysroot "$SDK" -miphoneos-version-min=$IOS_MIN -O2
     -I"$BUILD_DIR" -DWINE_IOS=1 -Wno-implicit-function-declaration)
 if xcrun -sdk iphoneos clang "${KILL_FLAGS[@]}" -c "$BUILD_DIR/wineserver_ios_kill.c" -o "$OBJ_DIR/wineserver_ios_kill.o" 2>"$OBJ_DIR/err-kill.txt"; then
     echo "OK"

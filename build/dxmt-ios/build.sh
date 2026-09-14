@@ -4,6 +4,9 @@
 #
 # Produces: libdxmt_unix.a
 set -eu
+# Minimum iOS version for every native artifact in the app bundle. Overridable
+# so a contributor can raise it; 16.0 is the floor the project supports.
+IOS_MIN="${IOS_MIN:-16.0}"
 
 BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$BUILD_DIR/../.." && pwd)"
@@ -17,7 +20,7 @@ OUT_LIB="$BUILD_DIR/libdxmt_unix.a"
 
 mkdir -p "$OBJ_DIR"
 
-COMMON_FLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=18.0 -fblocks -O2"
+COMMON_FLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=$IOS_MIN -fblocks -O2"
 INCLUDES="-I$DXMT_ROOT/include -I$DXMT_ROOT/libs -I$DXMT_SRC/winemetal -I$DXMT_SRC/airconv"
 INCLUDES_DIRECTX="-I$DXMT_ROOT/include/native/directx -I$DXMT_ROOT/include/native/windows"
 INCLUDES_SHADERS="-I$BUILD_DIR/shader-headers"

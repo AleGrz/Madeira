@@ -15,6 +15,9 @@
 #  - Stage markers make re-runs skip completed stages; delete
 #    obj/<stage>.done to force a rebuild.
 set -e
+# Minimum iOS version for every native artifact in the app bundle. Overridable
+# so a contributor can raise it; 16.0 is the floor the project supports.
+IOS_MIN="${IOS_MIN:-16.0}"
 
 BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$BUILD_DIR/../.." && pwd)"
@@ -28,7 +31,7 @@ GNUTLS_VER=3.8.9
 
 SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 CLANG=$(xcrun -f clang)
-HOSTFLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=17.0"
+HOSTFLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=$IOS_MIN"
 
 export CC="$CLANG $HOSTFLAGS"
 export CXX="$(xcrun -f clang++) $HOSTFLAGS"

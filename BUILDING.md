@@ -37,8 +37,25 @@ The IPA is ad-hoc signed with Madeira's requested entitlements so that a
 sideloading tool such as SideStore can re-sign it with the contributor's own
 development identity.
 
-The current native DXMT build targets iOS 18.0, so the packaged application
-also uses iOS 18.0 as its effective deployment target.
+Everything is built for iOS 16.0 by default — the app, every native library,
+and the DXMT pieces alike. Override it for the whole build with:
+
+```sh
+IOS_MIN=18.0 ./scripts/build-ipa.sh
+```
+
+Building for 16.0 needs two source changes that live in
+`patches/dxmt-ios16-metal30-metalfx.patch` and are applied to the `research/dxmt`
+submodule automatically: MetalFX is gated behind an iOS 18 availability check
+(the framework does not exist before 18, and is weak-linked in the Xcode
+project), and generated AIR declares the Metal version the running OS actually
+has (3.0 on iOS 16, 3.1 on 17, 3.2 on 18+) instead of deriving it from the OS
+major number as if it were macOS.
+
+Note that the deployment target only reaches artifacts that are actually
+rebuilt, and the expensive ones are cached by existence. After changing
+`IOS_MIN` the build prints the list of directories to delete for a fully
+consistent bundle.
 
 ## Re-running the build
 

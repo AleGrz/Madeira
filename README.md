@@ -17,9 +17,18 @@ breaking changes.
 
 ## Requirements
 
-- A non-jailbroken iPhone. Development has been on an A15 (iPhone 13 Pro).
-- JIT, which on iOS requires a debugger to attach —
-  [StikDebug](https://github.com/0-Blu/StikJIT) is what this project uses.
+- A non-jailbroken iPhone or iPad running iOS/iPadOS 16.0 or later.
+  Development has been on an A15 (iPhone 13 Pro); an M1 iPad on iPadOS 16.3
+  is supported but is not the daily-driver target, so expect it to be the
+  first place a regression shows up.
+- JIT, which on iOS requires a debugger to attach.
+  [StikDebug](https://github.com/0-Blu/StikJIT) is what this project uses on
+  iOS 17.4 and later, and it is required from iOS 26 on, where the debugger
+  must stay attached for the whole session. On iOS 16 and 17.0-17.3 StikDebug
+  does not run: enable JIT with any pairing-based tool instead (AltStore or
+  SideStore's *Enable JIT*, or Jitterbug). Those releases predate TXM, so the
+  attach can end immediately — `CS_DEBUGGED` sticks, and the app dual-maps its
+  own executable pages rather than asking a debugger for them.
 - An Apple ID for signing. A free account works; its provisioning profiles
   expire after 7 days, so the app must be rebuilt and reinstalled weekly. The
   app's container survives reinstall, so prefixes and saves are preserved.

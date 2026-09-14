@@ -1,0 +1,281 @@
+diff --git a/src/airconv/airconv_public.h b/src/airconv/airconv_public.h
+index 7bc8aa6..4b34212 100644
+--- a/src/airconv/airconv_public.h
++++ b/src/airconv/airconv_public.h
+@@ -217,6 +217,7 @@ struct SM50_SHADER_EMULATE_VERTEX_STREAM_OUTPUT_DATA {
+ };
+ 
+ enum SM50_SHADER_METAL_VERSION {
++  SM50_SHADER_METAL_300 = 300,
+   SM50_SHADER_METAL_310 = 310,
+   SM50_SHADER_METAL_320 = 320,
+   SM50_SHADER_METAL_MAX = 0xffffffff,
+diff --git a/src/airconv/dxbc_converter.cpp b/src/airconv/dxbc_converter.cpp
+index c49a7b3..394620f 100644
+--- a/src/airconv/dxbc_converter.cpp
++++ b/src/airconv/dxbc_converter.cpp
+@@ -373,6 +373,7 @@ void setup_temp_register(
+ 
+ void setup_metal_version(llvm::Module &module, SM50_SHADER_METAL_VERSION metal_verison) {
+   using namespace llvm;
++  metal_verison = clamp_metal_version_to_host(metal_verison);
+   auto &context = module.getContext();
+   auto createUnsignedInteger = [&](uint32_t s) {
+     return ConstantAsMetadata::get(ConstantInt::get(context, APInt{32, s, false}));
+@@ -392,6 +393,19 @@ void setup_metal_version(llvm::Module &module, SM50_SHADER_METAL_VERSION metal_v
+     module.setTargetTriple("air64-apple-macosx15.0.0");
+     break;
+   }
++  case SM50_SHADER_METAL_300: {
++    /* Metal 3.0 (iOS 16 / macOS 13). Same emitted IR as 3.1 — nothing in this
++     * converter is gated below SM50_SHADER_METAL_320 — only the declared
++     * version differs, which is what an older on-device compiler checks. */
++    airVersion->addOperand(
++        MDTuple::get(context, {createUnsignedInteger(2), createUnsignedInteger(5), createUnsignedInteger(0)})
++    );
++    airLangVersion->addOperand(MDTuple::get(
++        context, {createString("Metal"), createUnsignedInteger(3), createUnsignedInteger(0), createUnsignedInteger(0)}
++    ));
++    module.setTargetTriple("air64-apple-macosx13.0.0");
++    break;
++  }
+   default: {
+     airVersion->addOperand(
+         MDTuple::get(context, {createUnsignedInteger(2), createUnsignedInteger(6), createUnsignedInteger(0)})
+@@ -427,10 +441,10 @@ llvm::Error convert_dxbc_pixel_shader(
+     pso_unorm_output_reg_mask = pso_data->unorm_output_reg_mask;
+     pso_sample_mask = pso_data->sample_mask;
+   }
+-  SM50_SHADER_METAL_VERSION metal_version = SM50_SHADER_METAL_310;
++  SM50_SHADER_METAL_VERSION metal_version = clamp_metal_version_to_host(SM50_SHADER_METAL_310);
+   SM50_SHADER_COMMON_DATA *sm50_common = nullptr;
+   if (args_get_data<SM50_SHADER_COMMON, SM50_SHADER_COMMON_DATA>(pArgs, &sm50_common)) {
+-    metal_version = sm50_common->metal_version;
++    metal_version = clamp_metal_version_to_host(sm50_common->metal_version);
+   }
+ 
+   IREffect prologue([](auto) { return std::monostate(); });
+@@ -549,10 +563,10 @@ llvm::Error convert_dxbc_compute_shader(
+   auto func_signature = pShaderInternal->func_signature; // copy
+   auto shader_info = &(pShaderInternal->shader_info);
+ 
+-  SM50_SHADER_METAL_VERSION metal_version = SM50_SHADER_METAL_310;
++  SM50_SHADER_METAL_VERSION metal_version = clamp_metal_version_to_host(SM50_SHADER_METAL_310);
+   SM50_SHADER_COMMON_DATA *sm50_common = nullptr;
+   if (args_get_data<SM50_SHADER_COMMON, SM50_SHADER_COMMON_DATA>(pArgs, &sm50_common)) {
+-    metal_version = sm50_common->metal_version;
++    metal_version = clamp_metal_version_to_host(sm50_common->metal_version);
+   }
+ 
+   IREffect prologue([](auto) { return std::monostate(); });
+@@ -643,10 +657,10 @@ llvm::Error convert_dxbc_vertex_shader(
+       (args_get_data<SM50_SHADER_GS_PASS_THROUGH, SM50_SHADER_GS_PASS_THROUGH_DATA>(pArgs, &gs_passthrough) &&
+        gs_passthrough->RasterizationDisabled) ||
+       (vertex_so != nullptr);
+-  SM50_SHADER_METAL_VERSION metal_version = SM50_SHADER_METAL_310;
++  SM50_SHADER_METAL_VERSION metal_version = clamp_metal_version_to_host(SM50_SHADER_METAL_310);
+   SM50_SHADER_COMMON_DATA *sm50_common = nullptr;
+   if (args_get_data<SM50_SHADER_COMMON, SM50_SHADER_COMMON_DATA>(pArgs, &sm50_common)) {
+-    metal_version = sm50_common->metal_version;
++    metal_version = clamp_metal_version_to_host(sm50_common->metal_version);
+   }
+ 
+   IREffect prologue([](auto) { return std::monostate(); });
+diff --git a/src/airconv/dxbc_converter.hpp b/src/airconv/dxbc_converter.hpp
+index af74265..726045e 100644
+--- a/src/airconv/dxbc_converter.hpp
++++ b/src/airconv/dxbc_converter.hpp
+@@ -1,5 +1,8 @@
+ #pragma once
+ 
++#if defined(__APPLE__)
++#include <TargetConditionals.h>
++#endif
+ #include <cstdint>
+ #include <map>
+ #include <optional>
+@@ -467,6 +470,27 @@ void setup_binding_table(
+   uint32_t argbuffer_slot = kArgumentBufferBindIndex
+ );
+ 
++/* iOS does not get the same Metal feature level as the macOS release it shares a
++ * year with, and the caller cannot tell the difference: DeviceImpl derives its
++ * request from the raw OS major number returned by WMTGetOSVersion, which on iOS
++ * is the iOS version. On iPadOS 16 that reads as ">= 15" and asks for Metal 3.2.
++ * AIR that declares a language version the on-device compiler does not know is
++ * rejected outright, and 3.2-only lowerings would not compile there either, so
++ * every entry point clamps its requested version through this.
++ * iOS 18 == macOS 15 (Metal 3.2), iOS 17 == macOS 14 (3.1), iOS 16 == 3.0. */
++inline SM50_SHADER_METAL_VERSION
++clamp_metal_version_to_host(SM50_SHADER_METAL_VERSION requested) {
++#if defined(__APPLE__) && TARGET_OS_IOS
++  if (__builtin_available(iOS 18.0, *))
++    return requested;
++  if (__builtin_available(iOS 17.0, *))
++    return requested > SM50_SHADER_METAL_310 ? SM50_SHADER_METAL_310 : requested;
++  return SM50_SHADER_METAL_300;
++#else
++  return requested;
++#endif
++}
++
+ void setup_metal_version(llvm::Module &module, SM50_SHADER_METAL_VERSION metal_verison);
+ 
+ void setup_temp_register(
+diff --git a/src/airconv/dxbc_converter_gs.cpp b/src/airconv/dxbc_converter_gs.cpp
+index 6c152a1..e35c86b 100644
+--- a/src/airconv/dxbc_converter_gs.cpp
++++ b/src/airconv/dxbc_converter_gs.cpp
+@@ -111,10 +111,10 @@ convert_dxbc_geometry_shader(
+   if (args_get_data<SM50_SHADER_PSO_GEOMETRY_SHADER, SM50_SHADER_PSO_GEOMETRY_SHADER_DATA>(pArgs, &pso_data)) {
+     is_strip = pso_data->strip_topology;
+   }
+-  SM50_SHADER_METAL_VERSION metal_version = SM50_SHADER_METAL_310;
++  SM50_SHADER_METAL_VERSION metal_version = clamp_metal_version_to_host(SM50_SHADER_METAL_310);
+   SM50_SHADER_COMMON_DATA *sm50_common = nullptr;
+   if (args_get_data<SM50_SHADER_COMMON, SM50_SHADER_COMMON_DATA>(pArgs, &sm50_common)) {
+-    metal_version = sm50_common->metal_version;
++    metal_version = clamp_metal_version_to_host(sm50_common->metal_version);
+   }
+ 
+   IREffect prologue([](auto) { return std::monostate(); });
+@@ -512,10 +512,10 @@ convert_dxbc_vertex_for_geometry_shader(
+   if (args_get_data<SM50_SHADER_PSO_GEOMETRY_SHADER, SM50_SHADER_PSO_GEOMETRY_SHADER_DATA>(pArgs, &pso_data)) {
+     is_strip = pso_data->strip_topology;
+   }
+-  SM50_SHADER_METAL_VERSION metal_version = SM50_SHADER_METAL_310;
++  SM50_SHADER_METAL_VERSION metal_version = clamp_metal_version_to_host(SM50_SHADER_METAL_310);
+   SM50_SHADER_COMMON_DATA *sm50_common = nullptr;
+   if (args_get_data<SM50_SHADER_COMMON, SM50_SHADER_COMMON_DATA>(pArgs, &sm50_common)) {
+-    metal_version = sm50_common->metal_version;
++    metal_version = clamp_metal_version_to_host(sm50_common->metal_version);
+   }
+ 
+   bool is_triadj_strip = is_strip && pGeometryStage->gs_input_primitive == D3D10_SB_PRIMITIVE_TRIANGLE_ADJ;
+diff --git a/src/airconv/dxbc_converter_ts.cpp b/src/airconv/dxbc_converter_ts.cpp
+index 8c9707e..fad95cd 100644
+--- a/src/airconv/dxbc_converter_ts.cpp
++++ b/src/airconv/dxbc_converter_ts.cpp
+@@ -200,10 +200,10 @@ convert_dxbc_vertex_hull_shader(
+ 
+   auto [final_maxtessfactor, factor_int] = get_final_maxtessfactor(pHullStage, pArgs);
+ 
+-  SM50_SHADER_METAL_VERSION metal_version = SM50_SHADER_METAL_310;
++  SM50_SHADER_METAL_VERSION metal_version = clamp_metal_version_to_host(SM50_SHADER_METAL_310);
+   SM50_SHADER_COMMON_DATA *sm50_common = nullptr;
+   if (args_get_data<SM50_SHADER_COMMON, SM50_SHADER_COMMON_DATA>(pArgs, &sm50_common)) {
+-    metal_version = sm50_common->metal_version;
++    metal_version = clamp_metal_version_to_host(sm50_common->metal_version);
+   }
+   SM50_SHADER_IA_INPUT_LAYOUT_DATA *ia_layout = nullptr;
+   args_get_data<SM50_SHADER_IA_INPUT_LAYOUT, SM50_SHADER_IA_INPUT_LAYOUT_DATA>(pArgs, &ia_layout);
+@@ -719,10 +719,10 @@ convert_dxbc_tesselator_domain_shader(
+   bool rasterization_disabled =
+       (args_get_data<SM50_SHADER_GS_PASS_THROUGH, SM50_SHADER_GS_PASS_THROUGH_DATA>(pArgs, &gs_passthrough) &&
+        gs_passthrough->RasterizationDisabled);
+-  SM50_SHADER_METAL_VERSION metal_version = SM50_SHADER_METAL_310;
++  SM50_SHADER_METAL_VERSION metal_version = clamp_metal_version_to_host(SM50_SHADER_METAL_310);
+   SM50_SHADER_COMMON_DATA *sm50_common = nullptr;
+   if (args_get_data<SM50_SHADER_COMMON, SM50_SHADER_COMMON_DATA>(pArgs, &sm50_common)) {
+-    metal_version = sm50_common->metal_version;
++    metal_version = clamp_metal_version_to_host(sm50_common->metal_version);
+   }
+ 
+   auto [final_maxtessfactor, factor_int] = get_final_maxtessfactor(pHullStage, pArgs);
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index 54b495c..30b7cbc 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -17,6 +17,20 @@ static inline CGDirectDisplayID CGMainDisplayID(void) { return 1; }
+ #import <CoreFoundation/CFRunLoop.h>
+ #import <Metal/Metal.h>
+ #import <MetalFX/MetalFX.h>
++/* MetalFX only reached iOS in 18.0, and the app has to launch on iPadOS 16, so
++ * the framework is weak-linked there. Every entry point below that touches it
++ * asks first; with the framework absent the class references are nil and the
++ * queries answer "unsupported", which is what DXMT does with a device that
++ * cannot upscale anyway. */
++static bool metalfx_available(void) {
++#if TARGET_OS_IOS
++  if (@available(iOS 18.0, *))
++    return true;
++  return false;
++#else
++  return true;
++#endif
++}
+ #import <QuartzCore/QuartzCore.h>
+ #if TARGET_OS_IOS
+ #include <objc/message.h>
+@@ -2240,7 +2254,13 @@ _MTLDevice_supportsBCTextureCompression(void *obj) {
+     params->ret = (wmtr_call(RM_OP_SUPPORTS_BC, &a, sizeof a, &r, sizeof r, 0) == RM_OK) ? r.value : 0;
+     return STATUS_SUCCESS;
+   }
+-  params->ret = [(id<MTLDevice>)params->handle supportsBCTextureCompression];
++  /* supportsBCTextureCompression only exists from iOS 16.4 / macOS 11; on an
++   * older device the selector raises rather than answering NO. The cached
++   * probe in to_metal_pixel_format() already asks this way. */
++  id<MTLDevice> bc_device = (id<MTLDevice>)params->handle;
++  params->ret = [bc_device respondsToSelector:@selector(supportsBCTextureCompression)]
++                    ? [bc_device supportsBCTextureCompression]
++                    : 0;
+   return STATUS_SUCCESS;
+ }
+ 
+@@ -2347,6 +2367,10 @@ static const int SIGNALS[] = {
+ static NTSTATUS
+ _MTLDevice_newTemporalScaler(void *obj) {
+   struct unixcall_mtldevice_newfxtemporalscaler *params = obj;
++  if (!metalfx_available()) {
++    params->ret = 0;
++    return STATUS_SUCCESS;
++  }
+   MTLFXTemporalScalerDescriptor *desc = [[MTLFXTemporalScalerDescriptor alloc] init];
+   const struct WMTFXTemporalScalerInfo *info = params->info.ptr;
+   desc.colorTextureFormat = to_metal_pixel_format(info->color_format);
+@@ -2390,6 +2414,10 @@ _MTLDevice_newTemporalScaler(void *obj) {
+ static NTSTATUS
+ _MTLDevice_newSpatialScaler(void *obj) {
+   struct unixcall_mtldevice_newfxspatialscaler *params = obj;
++  if (!metalfx_available()) {
++    params->ret = 0;
++    return STATUS_SUCCESS;
++  }
+   MTLFXSpatialScalerDescriptor *desc = [[MTLFXSpatialScalerDescriptor alloc] init];
+   const struct WMTFXSpatialScalerInfo *info = params->info.ptr;
+   desc.colorTextureFormat = to_metal_pixel_format(info->color_format);
+@@ -2408,6 +2436,8 @@ _MTLCommandBuffer_encodeTemporalScale(void *obj) {
+   struct unixcall_mtlcommandbuffer_temporal_scale *params = obj;
+   id<MTLCommandBuffer> cmdbuf = (id<MTLCommandBuffer>)params->cmdbuf;
+   id<MTLFXTemporalScaler> scaler = (id<MTLFXTemporalScaler>)params->scaler;
++  if (!scaler)
++    return STATUS_SUCCESS;
+   scaler.colorTexture = (id<MTLTexture>)params->color;
+   scaler.outputTexture = (id<MTLTexture>)params->output;
+   scaler.depthTexture = (id<MTLTexture>)params->depth;
+@@ -2433,6 +2463,8 @@ _MTLCommandBuffer_encodeSpatialScale(void *obj) {
+   struct unixcall_mtlcommandbuffer_spatial_scale *params = obj;
+   id<MTLCommandBuffer> cmdbuf = (id<MTLCommandBuffer>)params->cmdbuf;
+   id<MTLFXSpatialScaler> scaler = (id<MTLFXSpatialScaler>)params->scaler;
++  if (!scaler)
++    return STATUS_SUCCESS;
+   scaler.colorTexture = (id<MTLTexture>)params->color;
+   scaler.outputTexture = (id<MTLTexture>)params->output;
+   scaler.fence = (id<MTLFence>)params->fence;
+@@ -2571,14 +2603,14 @@ _MetalLayer_nextDrawable(void *obj) {
+ static NTSTATUS
+ _MTLDevice_supportsFXSpatialScaler(void *obj) {
+   struct unixcall_generic_obj_uint64_ret *params = obj;
+-  params->ret = [MTLFXSpatialScalerDescriptor supportsDevice:(id<MTLDevice>)params->handle];
++  params->ret = metalfx_available() ? [MTLFXSpatialScalerDescriptor supportsDevice:(id<MTLDevice>)params->handle] : 0;
+   return STATUS_SUCCESS;
+ }
+ 
+ static NTSTATUS
+ _MTLDevice_supportsFXTemporalScaler(void *obj) {
+   struct unixcall_generic_obj_uint64_ret *params = obj;
+-  params->ret = [MTLFXTemporalScalerDescriptor supportsDevice:(id<MTLDevice>)params->handle];
++  params->ret = metalfx_available() ? [MTLFXTemporalScalerDescriptor supportsDevice:(id<MTLDevice>)params->handle] : 0;
+   return STATUS_SUCCESS;
+ }
+ 

@@ -3,6 +3,9 @@
 # This removes the circular requirement that contributors already have an
 # untracked app/Madeira/libwineserver.a before their first build.
 set -euo pipefail
+# Minimum iOS version for every native artifact in the app bundle. Overridable
+# so a contributor can raise it; 16.0 is the floor the project supports.
+IOS_MIN="${IOS_MIN:-16.0}"
 
 BUILD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$BUILD_DIR/../.." && pwd)"
@@ -25,7 +28,7 @@ fi
 
 mkdir -p "$BASE_DIR"
 CC_FLAGS=(
-  -arch arm64 -isysroot "$SDK" -miphoneos-version-min=17.0 -O2
+  -arch arm64 -isysroot "$SDK" -miphoneos-version-min=$IOS_MIN -O2
   -I"$WINE_SRC/include" -I"$WINE_SRC/include/wine"
   -I"$WINE_SRC/build-macos/include" -I"$WINE_SRC/build-macos/server"
   -I"$BUILD_DIR" -I"$WINE_SRC/server"

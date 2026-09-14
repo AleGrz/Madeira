@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Minimum iOS version for every native artifact in the app bundle. Overridable
+# so a contributor can raise it; 16.0 is the floor the project supports.
+IOS_MIN="${IOS_MIN:-16.0}"
 ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 8)}"
 SRC="$ROOT/toolchains/llvm-project"
@@ -46,7 +49,7 @@ cmake -S "$SRC/llvm" -B "$IOS" -G Ninja \
   -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_OSX_SYSROOT=iphoneos \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \
-  -DCMAKE_OSX_DEPLOYMENT_TARGET=18.0 \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=$IOS_MIN \
   -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_TABLEGEN="$HOST/bin/llvm-tblgen" \
   -DLLVM_BUILD_UTILS=OFF \

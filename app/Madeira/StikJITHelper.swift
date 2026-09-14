@@ -30,6 +30,23 @@ enum StikJITHelper {
     /// Open StikDebug with our JIT script embedded in the URL.
     /// StikDebug will attach to our process and run the script.
     static func enableJIT(completion: @escaping (Bool) -> Void) {
+        if usesInProcessPool && !isAvailable {
+            // StikDebug needs iOS 17.4+. On 16.x JIT comes from any
+            // pairing-based attach; there is no URL scheme to drive it, so say
+            // what to do and then wait for CS_DEBUGGED to appear.
+            if jit_check_debugged() {
+                LogStore.shared.log("JIT already enabled (CS_DEBUGGED set).", level: .success)
+                completion(true)
+                return
+            }
+            LogStore.shared.log("No StikDebug on this iOS version. Enable JIT from the host:", level: .error)
+            LogStore.shared.log("  AltStore/SideStore: long-press Madeira -> Enable JIT", level: .info)
+            LogStore.shared.log("  or Jitterbug with this device's pairing file.", level: .info)
+            LogStore.shared.log("Waiting for CS_DEBUGGED...", level: .info)
+            pollForJIT(completion: completion)
+            return
+        }
+
         let bundleId = Bundle.main.bundleIdentifier ?? "com.madeira.emulator"
 
         // Build the URL with script data
@@ -67,6 +84,84 @@ enum StikJITHelper {
         }
     }
 
+    /// Pre-StikDebug iOS (16.x, 17.0-17.3): there is no scripted debugger to
+    /// serve the BRK #0xf00d protocol, and none is needed. Those releases
+    /// predate TXM, so a plain attach-detach from any pairing-based tool
+    /// (AltStore/SideStore "Enable JIT", Jitterbug) leaves CS_DEBUGGED set and
+    /// the process can dual-map its own RX pages — the MeloNX trick that
+    /// jit_region_create() implements. StikDebug itself needs 17.4+ for the
+    /// RemoteXPC tunnel, so on an iPadOS 16.3 M1 iPad this is the only path.
+    static var usesInProcessPool: Bool {
+        if #available(iOS 17.4, *) { return false }
+        return true
+    }
+
+    /// Keeps the production pool's region (and any mis-placed ones) alive for
+    /// the lifetime of the process. Freeing a region would let the kernel hand
+    /// the same hole back on the next attempt.
+    private static var retainedRegions: [OpaquePointer] = []
+
+    /// Allocate the JIT pool without a debugger: one dual-mapped region, RX and
+    /// RW views over the same memory entry, NO_FOOTPRINT applied by
+    /// jit_region_create(). Placement constraints are the same ones the
+    /// debugger path enforces, because they are properties of FEX and of Wine's
+    /// guest window, not of who handed out the pages.
+    static func allocatePoolInProcess(poolSize: Int) -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
+        LogStore.shared.log("Allocating \(poolSize / 1024 / 1024)MB JIT pool in-process (dual map, no debugger)...")
+
+        // Same low-address pin as the debugger path: FEX's dispatcher emit is
+        // position-dependent below 0x119000000.
+        let pinTarget: vm_address_t = 0x119000000
+        let chunkSize = 16 * 1024 * 1024
+        for i in 0..<32 {
+            var addr: vm_address_t = 0
+            let kr = vm_allocate(mach_task_self_, &addr, vm_size_t(chunkSize), VM_FLAGS_ANYWHERE)
+            if kr == KERN_SUCCESS {
+                LogStore.shared.log(String(format: "JIT-pool pin chunk %d at 0x%lx (16MB)", i, Int(addr)))
+                if addr + vm_address_t(chunkSize) >= pinTarget { break }
+            } else {
+                LogStore.shared.log("JIT-pool pin chunk \(i) FAILED kr=\(kr)", level: .error)
+                break
+            }
+        }
+
+        let goodLow = 0x119000000
+        let guestLo = 0x7000000000
+        let guestHi = 0x8000000000
+
+        for attempt in 0..<4 {
+            guard let region = jit_region_create(poolSize) else {
+                LogStore.shared.log("jit_region_create failed (attempt \(attempt))", level: .error)
+                break
+            }
+            // Hold every region, good or bad: a rejected one has to stay mapped
+            // so the next vm_map cannot be handed the same address back.
+            retainedRegions.append(region)
+
+            guard let rx = jit_region_rx_ptr(region), let rw = jit_region_rw_ptr(region) else {
+                LogStore.shared.log("dual-mapped region has no RX/RW view (attempt \(attempt))", level: .error)
+                continue
+            }
+            let a = Int(bitPattern: rx)
+            let inGuestWindow = a + poolSize > guestLo && a < guestHi
+            if a >= goodLow && !inGuestWindow {
+                LogStore.shared.log(String(format: "RX pool at %p, RW mapping at %p", a, Int(bitPattern: rw)))
+                LogStore.shared.log("JIT pool ready (in-process dual map, no debugger).", level: .success)
+                return (rx: rx, rw: rw, size: poolSize)
+            }
+            LogStore.shared.log(String(format: "BAD POOL placement 0x%lx (%@) — re-rolling (attempt %d)",
+                                       a, a < goodLow ? "mode A low" : "guest 64G window",
+                                       attempt), level: .error)
+        }
+
+        LogStore.shared.log("BAD POOL: no valid placement after retries. Killing in 10s — please relaunch.", level: .error)
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 10) {
+            LogStore.shared.log("BAD POOL — exiting now. Relaunch the app.", level: .error)
+            exit(0)
+        }
+        return nil
+    }
+
     /// Allocate a JIT memory pool via BRK #0xf00d, then detach the debugger.
     /// Call this after CS_DEBUGGED is confirmed.
     /// Returns the allocated RX base address and RW mapping, or nil on failure.
@@ -80,6 +175,10 @@ enum StikJITHelper {
     /// Allocate a JIT memory pool via BRK #0xf00d WITHOUT detaching the debugger.
     /// The debugger stays attached so Wine can use BRK to prepare PE code pages.
     static func allocatePool(poolSize: Int = 128 * 1024 * 1024) -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
+        if usesInProcessPool {
+            return allocatePoolInProcess(poolSize: poolSize)
+        }
+
         LogStore.shared.log("Allocating \(poolSize / 1024 / 1024)MB JIT pool via debugger...")
 
         // iOS-Madeira: FEX's dispatcher emit has a position-dependent encoding
@@ -305,6 +404,14 @@ enum StikJITHelper {
 
     /// Detach the debugger. Call this after Wine is done loading PE DLLs.
     static func detachDebugger() {
+        if usesInProcessPool {
+            // Nothing is attached: the pairing tool detached as soon as it set
+            // CS_DEBUGGED. Executing BRK here would only hit the app's own
+            // SIGTRAP handler.
+            setenv("MADEIRA_DETACHED", "1", 1)
+            LogStore.shared.log("No debugger attached (in-process pool) — detach skipped.")
+            return
+        }
         LogStore.shared.log("Detaching debugger...")
         jit26_detach()
         // task #34: signal in-process waiters (share-probe poller). CS_DEBUGGED
