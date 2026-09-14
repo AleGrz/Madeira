@@ -24,14 +24,35 @@ apply_patch() {
     echo "  $name: already applied"
     return
   fi
-  if ! git -C "$ROOT/$submodule" apply --check "$patch" >/dev/null 2>&1; then
-    echo "ERROR: $name does not apply to $submodule." >&2
-    echo "       The submodule has moved; regenerate the patch against its current HEAD." >&2
-    exit 1
+  if git -C "$ROOT/$submodule" apply --check "$patch" >/dev/null 2>&1; then
+    git -C "$ROOT/$submodule" apply "$patch"
+    echo "  $name: applied"
+    [[ -n "$on_applied" ]] && "$on_applied"
+    return
   fi
-  git -C "$ROOT/$submodule" apply "$patch"
-  echo "  $name: applied"
-  [[ -n "$on_applied" ]] && "$on_applied"
+
+  # Neither reverse nor forward: the submodule tree has some OTHER version of
+  # our changes (an older patch from this same tree, still there on a warm CI
+  # cache). Reset the paths the patch touches to submodule HEAD and try once
+  # more; that is exactly the "wipe a stale local edit" case, and the paths in
+  # question are ones this script is authoritative over.
+  local paths
+  paths="$(sed -n 's,^+++ b/,,p' "$patch")"
+  if [[ -n "$paths" ]]; then
+    echo "  $name: paths differ from patch base -- resetting to submodule HEAD and retrying"
+    # shellcheck disable=SC2086  # word-splitting the newline-separated list is intentional
+    git -C "$ROOT/$submodule" checkout HEAD -- $paths
+    if git -C "$ROOT/$submodule" apply --check "$patch" >/dev/null 2>&1; then
+      git -C "$ROOT/$submodule" apply "$patch"
+      echo "  $name: applied (after reset)"
+      [[ -n "$on_applied" ]] && "$on_applied"
+      return
+    fi
+  fi
+
+  echo "ERROR: $name does not apply to $submodule." >&2
+  echo "       The submodule has moved; regenerate the patch against its current HEAD." >&2
+  exit 1
 }
 
 # Patched sources must not be linked against a cached build of the old ones.
