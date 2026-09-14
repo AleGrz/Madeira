@@ -1,0 +1,54 @@
+workflows:
+  madeira:
+    name: Madeira iOS IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 180
+
+    environment:
+      xcode: latest
+
+    cache:
+      cache_paths:
+        - $HOME/.cache
+        - $HOME/Library/Caches
+        - $CM_BUILD_DIR/toolchains
+        - $CM_BUILD_DIR/FEX/build-ios
+        - $CM_BUILD_DIR/wine/build-macos
+        - $CM_BUILD_DIR/wine/build-arm64ec
+        - $CM_BUILD_DIR/build
+        - $CM_BUILD_DIR/app/DerivedData
+        - $CM_BUILD_DIR/dist
+
+    scripts:
+      - name: Select Xcode
+        script: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Verify build environment
+        script: |
+          set -euo pipefail
+
+          uname -a
+          python3 --version
+          git --version
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Build Madeira
+        script: |
+          set -euo pipefail
+
+          chmod +x scripts/build-ipa.sh
+          JOBS="$(sysctl -n hw.ncpu)" ./scripts/build-ipa.sh
+
+      - name: Verify IPA
+        script: |
+          set -euo pipefail
+
+          test -f dist/Madeira.ipa
+          ls -lh dist/Madeira.ipa
+
+    artifacts:
+      - dist/Madeira.ipa
