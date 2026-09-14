@@ -12,7 +12,7 @@ set -euo pipefail
 ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
 apply_patch() {
-  local submodule="$1" patch="$2"
+  local submodule="$1" patch="$2" on_applied="${3:-}"
   local name
   name="$(basename "$patch")"
 
@@ -31,12 +31,29 @@ apply_patch() {
   fi
   git -C "$ROOT/$submodule" apply "$patch"
   echo "  $name: applied"
-  # Patched sources must not be linked against a cached build of the old ones.
-  # build-dxmt-ios.sh short-circuits on the combined archive alone, so drop it
-  # and the objects it was made from.
+  [[ -n "$on_applied" ]] && "$on_applied"
+}
+
+# Patched sources must not be linked against a cached build of the old ones.
+# build-dxmt-ios.sh short-circuits on the combined archive alone, so drop it
+# and the objects it was made from when the DXMT patch actually lands.
+drop_dxmt_cache() {
   rm -f "$ROOT/app/Madeira/libdxmt_combined.a" "$ROOT/build/dxmt-ios/libdxmt_combined.a"
   rm -rf "$ROOT/build/dxmt-ios/obj"
 }
 
-echo "Applying iOS 16 submodule patches"
-apply_patch research/dxmt "$ROOT/patches/dxmt-ios16-metal30-metalfx.patch"
+# Wine's macOS host tree is what the fresh Codemagic run rebuilt; drop its
+# stamps so the tree re-links against the patched source.
+drop_wine_host_cache() {
+  rm -f "$ROOT/wine/build-macos/dlls/win32u/win32u.so" \
+        "$ROOT/wine/build-macos/dlls/win32u/dibdrv/bitblt.o"
+}
+
+echo "Applying submodule patches"
+apply_patch research/dxmt "$ROOT/patches/dxmt-ios16-metal30-metalfx.patch" drop_dxmt_cache
+# Not iOS-16-specific — the wine fork's macOS host build calls one iOS-only
+# extern without the weak attribute the two neighbouring calls already carry,
+# and the host tree only gets built from scratch on a cold Codemagic cache, so
+# this only surfaced there. Fixing it upstream in the fork would be neater;
+# carrying it here keeps the submodule pin unchanged.
+apply_patch wine "$ROOT/patches/wine-win32u-srcwatch-weak.patch" drop_wine_host_cache

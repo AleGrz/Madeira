@@ -1,0 +1,15 @@
+diff --git a/dlls/win32u/dibdrv/bitblt.c b/dlls/win32u/dibdrv/bitblt.c
+--- a/dlls/win32u/dibdrv/bitblt.c
++++ b/dlls/win32u/dibdrv/bitblt.c
+@@ -1063,7 +1063,9 @@
+         }
+         else {
+-        extern void ios_srcwatch_arm( const void *bits, unsigned long len );
+-        ios_srcwatch_arm( bits->ptr,
++        extern void ios_srcwatch_arm( const void *bits, unsigned long len )
++            __attribute__((weak));
++        if (ios_srcwatch_arm)
++            ios_srcwatch_arm( bits->ptr,
+                           (unsigned long)info->bmiHeader.biSizeImage ?
+                               (unsigned long)info->bmiHeader.biSizeImage :
+                               (unsigned long)((dst->visrect.right - dst->visrect.left) * 4 *
