@@ -2,7 +2,7 @@ workflows:
   madeira:
     name: Madeira iOS IPA
     instance_type: mac_mini_m2
-    max_build_duration: 180
+    max_build_duration: 100
 
     environment:
       xcode: latest
