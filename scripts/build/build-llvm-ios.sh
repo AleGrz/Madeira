@@ -34,8 +34,23 @@ if 'MATCHES "Darwin|iOS"' not in s:
     p.write_text(s.replace(old, 'MATCHES "Darwin|iOS"', 1))
 PY
 
+# A configure that died leaves a CMakeCache.txt behind, and the next run reuses
+# it and reproduces the same failure even after the missing tool is installed --
+# "CMAKE_MAKE_PROGRAM is not set" is self-perpetuating that way. build.ninja only
+# appears once configure has finished, so its absence marks the directory as
+# wreckage rather than progress. Compiled objects survive whenever configure did
+# complete, which is the case worth caching.
+if [[ -e "$HOST/CMakeCache.txt" && ! -f "$HOST/build.ninja" ]]; then
+  echo "Dropping incomplete CMake configure in $HOST"
+  rm -rf "$HOST"
+fi
+
+NINJA="$(command -v ninja || true)"
+[[ -n "$NINJA" ]] || { echo "ERROR: ninja is required (brew install ninja)" >&2; exit 1; }
+
 if [[ ! -x "$HOST/bin/llvm-tblgen" ]]; then
   cmake -S "$SRC/llvm" -B "$HOST" -G Ninja \
+    -DCMAKE_MAKE_PROGRAM="$NINJA" \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_INCLUDE_TESTS=OFF \
     -DLLVM_INCLUDE_EXAMPLES=OFF \
@@ -45,7 +60,19 @@ if [[ ! -x "$HOST/bin/llvm-tblgen" ]]; then
   cmake --build "$HOST" --target llvm-tblgen --parallel "$JOBS"
 fi
 
+# A configure that died leaves a CMakeCache.txt behind, and the next run reuses
+# it and reproduces the same failure even after the missing tool is installed --
+# "CMAKE_MAKE_PROGRAM is not set" is self-perpetuating that way. build.ninja only
+# appears once configure has finished, so its absence marks the directory as
+# wreckage rather than progress. Compiled objects survive whenever configure did
+# complete, which is the case worth caching.
+if [[ -e "$IOS/CMakeCache.txt" && ! -f "$IOS/build.ninja" ]]; then
+  echo "Dropping incomplete CMake configure in $IOS"
+  rm -rf "$IOS"
+fi
+
 cmake -S "$SRC/llvm" -B "$IOS" -G Ninja \
+  -DCMAKE_MAKE_PROGRAM="$NINJA" \
   -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_OSX_SYSROOT=iphoneos \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \

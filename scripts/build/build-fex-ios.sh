@@ -14,10 +14,28 @@ if [[ -f "$OUT" ]]; then
   exit 0
 fi
 
+# A configure that died leaves a CMakeCache.txt behind, and the next run reuses
+# it and reproduces the same failure even after the missing tool is installed --
+# "CMAKE_MAKE_PROGRAM is not set" is self-perpetuating that way. build.ninja only
+# appears once configure has finished, so its absence marks the directory as
+# wreckage rather than progress. Compiled objects survive whenever configure did
+# complete, which is the case worth caching.
+if [[ -e "$BUILD/CMakeCache.txt" && ! -f "$BUILD/build.ninja" ]]; then
+  echo "Dropping incomplete CMake configure in $BUILD"
+  rm -rf "$BUILD"
+fi
+
 # -DFEX_IOS_HOST=1 selects the iOS host-feature stubs inside this FEX fork
 # (HostFeatures, InvalidationTracker, logging). A build without it compiles
 # but misdetects the host at runtime, so it is required here, not optional.
+# Hand CMake the ninja binary outright. The generator's own search is what
+# reported "CMAKE_MAKE_PROGRAM is not set", and build-ipa.sh has already proven
+# ninja exists by this point, so there is nothing left for that search to decide.
+NINJA="$(command -v ninja || true)"
+[[ -n "$NINJA" ]] || { echo "ERROR: ninja is required (brew install ninja)" >&2; exit 1; }
+
 cmake -S "$SRC" -B "$BUILD" -G Ninja \
+  -DCMAKE_MAKE_PROGRAM="$NINJA" \
   -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_SYSTEM_PROCESSOR=arm64 \
   -DCMAKE_OSX_SYSROOT=iphoneos \

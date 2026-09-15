@@ -17,6 +17,17 @@ SRC="$REPO_ROOT/research/freetype"
 
 [ -d "$SRC" ] || { echo "ERROR: clone freetype first (see header)"; exit 1; }
 
+# A configure that died leaves a CMakeCache.txt behind, and the next run reuses
+# it and reproduces the same failure even after the missing tool is installed --
+# "CMAKE_MAKE_PROGRAM is not set" is self-perpetuating that way. Makefile only
+# appears once configure has finished, so its absence marks the directory as
+# wreckage rather than progress. Compiled objects survive whenever configure did
+# complete, which is the case worth caching.
+if [[ -e "$BUILD_DIR/build/CMakeCache.txt" && ! -f "$BUILD_DIR/build/Makefile" ]]; then
+  echo "Dropping incomplete CMake configure in $BUILD_DIR/build"
+  rm -rf "$BUILD_DIR/build"
+fi
+
 cmake -S "$SRC" -B "$BUILD_DIR/build" -G "Unix Makefiles" \
   -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \

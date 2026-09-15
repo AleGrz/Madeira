@@ -37,15 +37,15 @@ mkdir -p "$ROOT/build"
 printf '%s' "$IOS_MIN" > "$STAMP"
 
 log "Installing build dependencies"
-brew install cmake ninja meson pkg-config autoconf automake libtool bison flex sevenzip llvm xxd || true
-
-# The bulk install above tolerates failure because it is mostly idempotent
-# no-ops; bison is the one formula the build cannot proceed without, so install
-# it on its own and let a real Homebrew error stop the run with its own message.
-if [[ ! -x "$(brew --prefix bison 2>/dev/null)/bin/bison" ]]; then
-  log "Installing bison (required by Wine's configure)"
-  brew install bison
-fi
+# One formula per call. `brew install a b c ...` gives up on the first formula
+# that errors and never reaches the rest, and `|| true` then hides that the
+# whole tail of the list was skipped -- which is how a run arrived at FEX's
+# cmake with no ninja installed and failed there, 20 minutes in, instead of
+# here. Per-formula failures stay non-fatal (most are idempotent no-ops); the
+# require_tool gate below is what actually decides whether the build can run.
+for formula in cmake ninja meson pkg-config autoconf automake libtool bison flex sevenzip llvm xxd; do
+  brew install "$formula" || echo "WARNING: brew install $formula failed" >&2
+done
 
 # bison, flex and llvm are keg-only: Homebrew deliberately keeps them off the
 # default PATH, so each one has to be prepended by hand. `brew --prefix <keg>`
@@ -62,6 +62,27 @@ for keg in bison flex llvm; do
   fi
 done
 export PATH
+
+# Every tool the build actually invokes, checked once here with PATH final. A
+# missing one gets a second solo install whose error is allowed to surface, then
+# a hard stop naming the tool -- cheaper than "CMake was unable to find a build
+# program corresponding to Ninja" after the Wine tree has already been built.
+# Only tools that are really called are listed: meson and pkg-config are
+# installed above out of caution but nothing in the build path runs them.
+require_tool() {
+  local cmd="$1" formula="$2"
+  command -v "$cmd" >/dev/null && return
+  log "Installing $formula (provides $cmd)"
+  brew install "$formula"
+  command -v "$cmd" >/dev/null ||
+    die "$cmd is required but is still not on PATH after 'brew install $formula'."
+}
+require_tool cmake cmake        # FEX, LLVM, DXMT, FreeType
+require_tool ninja ninja        # -G Ninja generator for FEX and LLVM
+require_tool bison bison        # Wine configure
+require_tool flex flex          # Wine configure
+require_tool xxd xxd            # shader headers, dxbc blobs
+require_tool 7zz sevenzip       # vcruntime extraction
 
 # Check it here, where the message can say which binary was picked, rather than
 # inside Wine's configure an hour into the build. macOS ships bison 2.3 in
