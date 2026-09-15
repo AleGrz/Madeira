@@ -1,0 +1,41 @@
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 610c9eb..41b5807 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -4120,9 +4120,26 @@ NTSTATUS CDECL wine_server_handle_to_fd( HANDLE handle, unsigned int access, int
+  * inventing one would manufacture false positives.  Deduped per (module,
+  * slot) so one persistent zero cannot flood the cap.
+  */
+-static void iat_life_sweep( const char *when )
++/* iOS-Madeira: the forward pool hook is arm64ec-only -- ntdll.spec exports
++ * p_ios_jit_translate_addr as -arch=arm64ec, and only signal_arm64ec.c defines
++ * the xlate_ios_jit thunk that reads it (signal_arm64.c carries the reverse one
++ * alone). Calling it unconditionally leaves the plain-arm64 ntdll.dll with an
++ * undefined symbol, which is what the macOS host tree builds. Fall back to
++ * identity there: the caller reads pslot == slot as "no pool copy" and checks
++ * the PE view only, which is the whole of the truth on a build that has no
++ * JIT-pool aliases in the first place. */
++static void *iat_life_pool_slot( void *slot )
+ {
++#ifdef __arm64ec__
+     extern void *xlate_ios_jit( void *ptr );
++    return xlate_ios_jit( slot );
++#else
++    return slot;
++#endif
++}
++
++static void iat_life_sweep( const char *when )
++{
+     static struct { const void *base; ULONG rva; } seen[64];
+     static int nseen, sweeps, reports;
+     LIST_ENTRY *list, *entry;
+@@ -4169,7 +4186,7 @@ static void iat_life_sweep( const char *when )
+                  * two views; a zero in EITHER is a branch-to-zero waiting to happen,
+                  * and checking only the PE side (as the first cut of this probe did)
+                  * cannot see a stale pool slot at all. */
+-                pslot = xlate_ios_jit( slot );
++                pslot = iat_life_pool_slot( slot );
+                 if (pslot && pslot != slot) { has_pool = 1; n_pool++; pool_val = *(ULONG_PTR *)pslot; }
+ 
+                 if (pe_val && !(has_pool && !pool_val)) continue;   /* both views fine */

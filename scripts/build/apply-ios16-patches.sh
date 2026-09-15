@@ -31,7 +31,7 @@ apply_patch() {
   # top of it instead of replacing it. Reset them to submodule HEAD first, so
   # the result is the same tree whether the cache was cold, warm-and-current, or
   # warm-and-stale. Safe because this script is the only thing that edits these
-  # paths, and no two patches here touch the same submodule.
+  # paths, and no two patches here touch the same file.
   local paths
   paths="$(sed -n 's,^+++ b/,,p' "$patch")"
   if [[ -n "$paths" ]]; then
@@ -76,3 +76,8 @@ apply_patch research/dxmt "$ROOT/patches/dxmt-ios16-metal30-metalfx.patch" drop_
 # why it surfaced there and nowhere else. Fixing it upstream in the fork would
 # be neater; carrying it here keeps the submodule pin unchanged.
 apply_patch wine "$ROOT/patches/wine-win32u-srcwatch-ios-guard.patch" drop_wine_host_cache
+# Same shape, PE side: loader.c's ml701 IAT sweep calls xlate_ios_jit, which only
+# the arm64ec build defines, so the host tree's plain-arm64 ntdll.dll fails to
+# link. The host tree is configured --enable-archs=aarch64, so it is the only
+# build that hits this.
+apply_patch wine "$ROOT/patches/wine-ntdll-iat-life-arm64ec-only.patch" drop_wine_host_cache
