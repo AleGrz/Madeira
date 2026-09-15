@@ -20,9 +20,15 @@ if [[ ! -f "$WINE/build-macos/Makefile" ]]; then
   )
 fi
 
-if [[ ! -f "$WINE/build-macos/include/dwrite.h" || ! -x "$WINE/build-macos/tools/winebuild/winebuild" ]]; then
+# Gate on a stamp written only after make returns 0, not on individual outputs:
+# a run that died partway through still leaves dwrite.h and winebuild behind, and
+# treating that tree as "cached" hides the failure until something downstream
+# misses a generated header an hour later.
+HOST_STAMP="$WINE/build-macos/.madeira-host-built"
+if [[ ! -f "$HOST_STAMP" ]]; then
   echo "Building Wine host tree..."
   make -C "$WINE/build-macos" -j"$JOBS"
+  touch "$HOST_STAMP"
 else
   echo "Wine host tree: cached"
 fi

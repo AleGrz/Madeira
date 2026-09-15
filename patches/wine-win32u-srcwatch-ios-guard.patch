@@ -1,0 +1,29 @@
+diff --git a/dlls/win32u/dibdrv/bitblt.c b/dlls/win32u/dibdrv/bitblt.c
+index 57f4f59..c18a3d3 100644
+--- a/dlls/win32u/dibdrv/bitblt.c
++++ b/dlls/win32u/dibdrv/bitblt.c
+@@ -1012,6 +1012,16 @@ DWORD dibdrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
+      * one that already carries the displaced panel. Watching it names the
+      * GUEST code that wrote each region. Only the big paint qualifies; the
+      * watch itself is one-shot and env-gated (MADEIRA_SRCWATCH). */
++    /* iOS-Madeira: winios_dump_srcbits() and ios_srcwatch_arm{,_geom}() live in
++     * the iOS app (Winios.m and build/ntdll-unix/signal_arm64_ios.c) and exist in
++     * no other build. Wine's own macOS host tree compiles this file too, and there
++     * all three are simply undefined: __attribute__((weak)) does not save it,
++     * because on Mach-O that marks a DEFINITION coalescable rather than making a
++     * reference weak, so ld still fails the win32u.so link with "symbol(s) not
++     * found". Compile the block out instead, the way every other iOS-only extern
++     * in this fork (server/thread.c, dlls/ntdll/unix/file.c) already does; the iOS
++     * win32u build defines WINE_IOS, the host tree never does. */
++#ifdef WINE_IOS
+     if (dst && bits && bits->ptr && dst->visrect.right - dst->visrect.left >= 640
+         && dst->visrect.bottom - dst->visrect.top >= 400)
+     {
+@@ -1070,6 +1080,7 @@ DWORD dibdrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
+                                               (dst->visrect.bottom - dst->visrect.top)) );
+         }
+     }
++#endif  /* WINE_IOS */
+ 
+     if (dst && src && dst->visrect.right - dst->visrect.left >= 24)
+     {
