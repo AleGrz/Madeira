@@ -68,6 +68,13 @@ drop_wine_host_cache() {
         "$ROOT/wine/build-macos/.madeira-host-built"
 }
 
+# build-fex-ios.sh short-circuits on libFEXCore.a alone, so a patched source would
+# otherwise never be recompiled. Dropping the archive is enough: ninja rebuilds
+# only the translation units that actually changed.
+drop_fex_cache() {
+  rm -f "$ROOT/FEX/build-ios/FEXCore/Source/libFEXCore.a"
+}
+
 echo "Applying submodule patches"
 apply_patch research/dxmt "$ROOT/patches/dxmt-ios16-metal30-metalfx.patch" drop_dxmt_cache
 # Not iOS-16-specific — dibdrv/bitblt.c calls three iOS-only externs from code
@@ -81,3 +88,7 @@ apply_patch wine "$ROOT/patches/wine-win32u-srcwatch-ios-guard.patch" drop_wine_
 # link. The host tree is configured --enable-archs=aarch64, so it is the only
 # build that hits this.
 apply_patch wine "$ROOT/patches/wine-ntdll-iat-life-arm64ec-only.patch" drop_wine_host_cache
+# FEXCore's CASPAL probe (ml223) calls Win32 VirtualQuery/MEMORY_BASIC_INFORMATION,
+# which exist only in the WOW64 build; FEXCore is also compiled natively for iOS,
+# where the file does not compile at all. Keeps the Win32 path for that build.
+apply_patch FEX "$ROOT/patches/fex-caspal-probe-no-win32.patch" drop_fex_cache

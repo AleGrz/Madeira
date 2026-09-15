@@ -1,0 +1,33 @@
+diff --git a/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp b/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
+index 3d63fa2..9b2bae1 100644
+--- a/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
++++ b/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
+@@ -704,6 +704,15 @@ static void IosLogUnimplementedCASPAL(uint32_t Size, uint64_t* GPRs, uint32_t Ad
+    * which we DUAL-MAP (RW alias + RX alias). Aliased mappings are exactly where atomics
+    * can fault despite correct alignment. Report what the region actually is, so "guest
+    * data in a dual-mapped pool page" is distinguishable from ordinary private memory. */
++  /* iOS-Madeira: VirtualQuery and MEMORY_BASIC_INFORMATION are Win32, available to
++   * this probe only in the WOW64 build. FEXCore is compiled natively for iOS as
++   * well, where none of those names exist and this file fails to compile. Key the
++   * region lookup off _WIN32 rather than FEX_IOS_HOST (the guard used elsewhere in
++   * this file), because the predicate that actually matters is "is the Win32 API
++   * here", which is also false for a plain Linux host build. The address and its
++   * misalignment are the parts the probe was added to answer; the region fields are
++   * extra colour and their absence does not change what it reports. */
++#ifdef _WIN32
+   MEMORY_BASIC_INFORMATION mbi {};
+   const char* type = "?";
+   if (VirtualQuery(reinterpret_cast<LPCVOID>(GPRs[AddressReg]), &mbi, sizeof(mbi))) {
+@@ -714,6 +723,12 @@ static void IosLogUnimplementedCASPAL(uint32_t Size, uint64_t* GPRs, uint32_t Ad
+                     Size, AddressReg, GPRs[AddressReg], GPRs[AddressReg] & 15,
+                     (GPRs[AddressReg] & 15) ? "yes" : "no", mbi.BaseAddress, mbi.RegionSize,
+                     mbi.Protect, type, mbi.State);
++#else
++  LogMan::Msg::EFmt("[caspal128] MISALIGNED-UNSUPPORTED Size={} addrReg=x{} addr={:#x} misalign={} "
++                    "crosses16B={} | region n/a (no VirtualQuery on this host)",
++                    Size, AddressReg, GPRs[AddressReg], GPRs[AddressReg] & 15,
++                    (GPRs[AddressReg] & 15) ? "yes" : "no");
++#endif
+ }
+ 
+ static bool HandleCASPAL(uint32_t Instr, uint64_t* GPRs, uint32_t* StrictSplitLockMutex) {
